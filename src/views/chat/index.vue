@@ -3,13 +3,15 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { NButton, NInput, useDialog, useMessage } from 'naive-ui'
 import html2canvas from 'html2canvas'
+import { storeToRefs } from 'pinia'
+import { NAutoComplete} from 'naive-ui'
 import { Message } from './components'
 import { useScroll } from './hooks/useScroll'
 import { useChat } from './hooks/useChat'
 import { useCopyCode } from './hooks/useCopyCode'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
-import { useChatStore } from '@/store'
+import { useChatStore, usePromptStore } from '@/store'
 import { fetchChatAPIProcess } from '@/api'
 import { t } from '@/locales'
 
@@ -29,16 +31,23 @@ const { scrollRef, scrollToBottom } = useScroll()
 const { uuid } = route.params as { uuid: string }
 
 const dataSources = computed(() => chatStore.getChatByUuid(+uuid))
+const getEnabledNetwork = computed(() => chatStore.getEnabledNetwork)
 const conversationList = computed(() => dataSources.value.filter(item => (!item.inversion && !item.error)))
 
 const prompt = ref<string>('')
 const loading = ref<boolean>(false)
+
+// 添加PromptStore
+const promptStore = usePromptStore()
+// 使用storeToRefs，保证store修改后，联想部分能够重新渲染
+const { promptList: promptTemplate } = storeToRefs<any>(promptStore)
 
 function handleSubmit() {
   onConversation()
 }
 
 async function onConversation() {
+
   const message = prompt.value
 
   if (loading.value)
@@ -90,41 +99,44 @@ async function onConversation() {
       prompt: message,
       options,
       signal: controller.signal,
+      network: !!chatStore.getEnabledNetwork,
       onDownloadProgress: ({ event }) => {
+        debugger;
         const xhr = event.target
         const { responseText } = xhr
         // Always process the final line
-        const lastIndex = responseText.lastIndexOf('\n')
+        // const lastIndex = responseText.lastIndexOf('\n')
         let chunk = responseText
-        if (lastIndex !== -1)
-          chunk = responseText.substring(lastIndex)
+        // if (lastIndex !== -1)
+        //   chunk = responseText.substring(lastIndex)
         try {
-          const data = JSON.parse(chunk)
+          // const data = JSON.parse(chunk)
+          debugger;
           updateChat(
             +uuid,
             dataSources.value.length - 1,
             {
               dateTime: new Date().toLocaleString(),
-              text: data.text ?? '',
+              text: chunk ?? '',
               inversion: false,
               error: false,
               loading: false,
-              conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
+              conversationOptions: { },
               requestOptions: { prompt: message, options: { ...options } },
             },
           )
+          scrollToBottom()
         }
         catch (error) {
           //
         }
       },
-    })
-    scrollToBottom()
+    });
   }
   catch (error: any) {
-    const errorMessage = error?.message ?? t('common.wrong')
+    const errorMessage = error?.text ??  t('common.wrong')
 
-    if (error.message === 'canceled') {
+    if (error.text === 'canceled') {
       updateChatSome(
         +uuid,
         dataSources.value.length - 1,
@@ -172,6 +184,7 @@ async function onConversation() {
 }
 
 async function onRegenerate(index: number) {
+  debugger;
   if (loading.value)
     return
 
@@ -201,44 +214,46 @@ async function onRegenerate(index: number) {
       requestOptions: { prompt: message, ...options },
     },
   )
-
+// debugger;
   try {
     await fetchChatAPIProcess<Chat.ConversationResponse>({
       prompt: message,
       options,
+      network: !!chatStore.getEnabledNetwork,
       signal: controller.signal,
       onDownloadProgress: ({ event }) => {
         const xhr = event.target
         const { responseText } = xhr
         // Always process the final line
-        const lastIndex = responseText.lastIndexOf('\n')
-        let chunk = responseText
-        if (lastIndex !== -1)
-          chunk = responseText.substring(lastIndex)
+        // const lastIndex = responseText.lastIndexOf('\n')
+        let chunk = responseText;
+        // if (lastIndex !== -1)
+          // chunk = responseText.substring(lastIndex)
         try {
-          const data = JSON.parse(chunk)
+          // const data = JSON.parse(chunk)
           updateChat(
             +uuid,
-            index,
+            dataSources.value.length - 1,
             {
               dateTime: new Date().toLocaleString(),
-              text: data.text ?? '',
+              text: chunk ?? '',
               inversion: false,
               error: false,
               loading: false,
-              conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
-              requestOptions: { prompt: message, ...options },
+              conversationOptions: { },
+              requestOptions: { prompt: message, options: { ...options } },
             },
           )
+          scrollToBottom()
         }
         catch (error) {
           //
         }
       },
-    })
+    });
   }
   catch (error: any) {
-    if (error.message === 'canceled') {
+    if (error.text === 'canceled') {
       updateChatSome(
         +uuid,
         index,
@@ -249,7 +264,7 @@ async function onRegenerate(index: number) {
       return
     }
 
-    const errorMessage = error?.message ?? t('common.wrong')
+    const errorMessage = error?.text ?? t('common.wrong')
 
     updateChat(
       +uuid,
@@ -301,6 +316,7 @@ function handleExport() {
         Promise.resolve()
       }
       catch (error: any) {
+        console.error('error', error)
         ms.error(t('chat.exportFailed'))
       }
       finally {
@@ -326,6 +342,7 @@ function handleDelete(index: number) {
 }
 
 function handleClear() {
+
   if (loading.value)
     return
 
@@ -360,6 +377,31 @@ function handleStop() {
     controller.abort()
     loading.value = false
   }
+}
+
+// 可优化部分
+// 搜索选项计算，这里使用value作为索引项，所以当出现重复value时渲染异常(多项同时出现选中效果)
+// 理想状态下其实应该是key作为索引项,但官方的renderOption会出现问题，所以就需要value反renderLabel实现
+const searchOptions = computed(() => {
+  if (prompt.value.startsWith('/')) {
+    return promptTemplate.value.filter((item: { key: string }) => item.key.toLowerCase().includes(prompt.value.substring(1).toLowerCase())).map((obj: { value: any }) => {
+      return {
+        label: obj.value,
+        value: obj.value,
+      }
+    })
+  }
+  else {
+    return []
+  }
+})
+// value反渲染key
+const renderOption = (option: { label: string }) => {
+  for (const i of promptTemplate.value) {
+    if (i.value === option.label)
+      return [i.key]
+  }
+  return []
 }
 
 const placeholder = computed(() => {
@@ -405,13 +447,20 @@ onUnmounted(() => {
       >
         <div id="image-wrapper" class="w-full max-w-screen-xl m-auto" :class="[isMobile ? 'p-2' : 'p-4']">
           <template v-if="!dataSources.length">
-            <div class="flex items-center justify-center mt-4 text-center text-neutral-300">
+            <div class="flex items-center flex-col justify-center mt-4 text-center ">
               <SvgIcon icon="ri:bubble-chart-fill" class="mr-2 text-3xl" />
-              <span>Aha~</span>
+              <div>永久免费提供学习和测试，支持上下文，支持开启关闭联网模式，支持保存会话，切勿发布至国内平台或微信分享</div>
+              <div>被举报了，chat.binjie.site域名的dns被运营商污染了。。60%以上地区无法访问</div>
+              <div>可以访问境内镜像： https://chat1.binjie.site:7777 或者chat2,chat3,一直到9</div>
+              <div>还可以访问 cloudflare托管的 https://chat.yqcloud.top/</div>
+              <div></div>
+              <div>如果你觉得做的好，可以给我买一瓶冰阔落</div>
+              <div>
+                <img src="https://store-cbj.oss-cn-beijing.aliyuncs.com/kele.jpg" width="200" height="100" alt="kele">
+              </div>
             </div>
           </template>
           <template v-else>
-            <div>
               <Message
                 v-for="(item, index) of dataSources"
                 :key="index"
@@ -431,31 +480,35 @@ onUnmounted(() => {
                   Stop Responding
                 </NButton>
               </div>
-            </div>
+
           </template>
         </div>
       </div>
     </main>
     <footer :class="footerClass">
-      <div class="w-full max-w-screen-xl m-auto">
-        <div class="flex items-center justify-between space-x-2">
-          <HoverButton @click="handleClear">
-            <span class="text-xl text-[#4f555e] dark:text-white">
-              <SvgIcon icon="ri:delete-bin-line" />
+      <div class="flex items-center justify-between space-x-2">
+        <HoverButton tooltip="点击关闭或开启联网功能，开启后会自动从互联网获得信息来回答您，关闭联网能极大加快响应速度">
+            <span class="text-xl text-[#4f555e]" @click="handleClear">
+              <!-- <SvgIcon icon="ri:delete-bin-line" /> -->
+              <span style="color: #2979ff; width: 56px; display: inline-block;" v-if="getEnabledNetwork">联网开启</span>
+              <span style="color: red; width: 56px; display: inline-block;" v-if="!getEnabledNetwork">联网关闭</span>
             </span>
           </HoverButton>
+          <NAutoComplete v-model:value="prompt" :options="searchOptions" :render-label="renderOption">
+            <template #default="{ handleInput, handleBlur, handleFocus }">
+              <NInput
+                v-model:value="prompt" type="textarea" :placeholder="placeholder"
+                :autosize="{ minRows: 1, maxRows: 2 }" @input="handleInput" @focus="handleFocus" @blur="handleBlur" @keypress="handleEnter"
+              />
+            </template>
+          </NAutoComplete>
           <HoverButton @click="handleExport">
             <span class="text-xl text-[#4f555e] dark:text-white">
               <SvgIcon icon="ri:download-2-line" />
             </span>
           </HoverButton>
-          <NInput
-            v-model:value="prompt"
-            type="textarea"
-            :autosize="{ minRows: 1, maxRows: 2 }"
-            :placeholder="placeholder"
-            @keypress="handleEnter"
-          />
+        
+          
           <NButton type="primary" :disabled="buttonDisabled" @click="handleSubmit">
             <template #icon>
               <span class="dark:text-black">
@@ -463,7 +516,6 @@ onUnmounted(() => {
               </span>
             </template>
           </NButton>
-        </div>
       </div>
     </footer>
   </div>
