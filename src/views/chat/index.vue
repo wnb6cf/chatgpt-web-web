@@ -1,7 +1,8 @@
 <script setup lang='ts'>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { NButton, NInput, useDialog, useMessage } from 'naive-ui'
+import { storeToRefs } from 'pinia'
+import { NAutoComplete, NButton, NInput, useDialog, useMessage } from 'naive-ui'
 import html2canvas from 'html2canvas'
 import { Message } from './components'
 import { useScroll } from './hooks/useScroll'
@@ -11,7 +12,7 @@ import { useUsingContext } from './hooks/useUsingContext'
 import HeaderComponent from './components/Header/index.vue'
 import { HoverButton, SvgIcon } from '@/components/common'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
-import { useChatStore } from '@/store'
+import { useChatStore, usePromptStore } from '@/store'
 import { fetchChatAPIProcess } from '@/api'
 import { t } from '@/locales'
 
@@ -40,6 +41,11 @@ const conversationList = computed(() => dataSources.value.filter(item => (!item.
 const prompt = ref<string>('')
 const loading = ref<boolean>(false)
 
+// 添加PromptStore
+const promptStore = usePromptStore()
+// 使用storeToRefs，保证store修改后，联想部分能够重新渲染
+const { promptList: promptTemplate } = storeToRefs<any>(promptStore)
+
 function handleSubmit() {
   onConversation()
 }
@@ -67,6 +73,142 @@ async function onConversation() {
     },
   )
   scrollToBottom()
+
+  loading.value = true
+  prompt.value = ''
+
+  let options: Chat.ConversationRequest = {}
+  const lastContext = conversationList.value[conversationList.value.length - 1]?.conversationOptions
+
+  if (lastContext && usingContext.value)
+    options = { ...lastContext }
+
+  addChat(
+    +uuid,
+    {
+      dateTime: new Date().toLocaleString(),
+      text: '',
+      loading: true,
+      inversion: false,
+      error: false,
+      conversationOptions: null,
+      requestOptions: { prompt: message, options: { ...options } },
+    },
+  )
+  scrollToBottom()
+
+  try {
+    let lastText = ''
+    const fetchChatAPIOnce = async () => {
+      await fetchChatAPIProcess<Chat.ConversationResponse>({
+        prompt: message,
+        options,
+        signal: controller.signal,
+        onDownloadProgress: ({ event }) => {
+          const xhr = event.target
+          const { responseText } = xhr
+          // Always process the final line
+          const lastIndex = responseText.lastIndexOf('\n')
+          let chunk = responseText
+          if (lastIndex !== -1)
+            chunk = responseText.substring(lastIndex)
+          try {
+            const data = JSON.parse(chunk)
+            updateChat(
+              +uuid,
+              dataSources.value.length - 1,
+              {
+                dateTime: new Date().toLocaleString(),
+                text: lastText + data.text ?? '',
+                inversion: false,
+                error: false,
+                loading: false,
+                conversationOptions: { conversationId: data.conversationId, parentMessageId: data.id },
+                requestOptions: { prompt: message, options: { ...options } },
+              },
+            )
+
+            if (openLongReply && data.detail.choices[0].finish_reason === 'length') {
+              options.parentMessageId = data.id
+              lastText = data.text
+              message = ''
+              return fetchChatAPIOnce()
+            }
+
+            scrollToBottom()
+          }
+          catch (error) {
+          //
+          }
+        },
+      })
+    }
+
+    await fetchChatAPIOnce()
+  }
+  catch (error: any) {
+    const errorMessage = error?.message ?? t('common.wrong')
+
+    if (error.message === 'canceled') {
+      updateChatSome(
+        +uuid,
+        dataSources.value.length - 1,
+        {
+          loading: false,
+        },
+      )
+      scrollToBottom()
+      return
+    }
+
+    const currentChat = getChatByUuidAndIndex(+uuid, dataSources.value.length - 1)
+
+    if (currentChat?.text && currentChat.text !== '') {
+      updateChatSome(
+        +uuid,
+        dataSources.value.length - 1,
+        {
+          text: `${currentChat.text}\n[${errorMessage}]`,
+          error: false,
+          loading: false,
+        },
+      )
+      return
+    }
+
+    updateChat(
+      +uuid,
+      dataSources.value.length - 1,
+      {
+        dateTime: new Date().toLocaleString(),
+        text: errorMessage,
+        inversion: false,
+        error: true,
+        loading: false,
+        conversationOptions: null,
+        requestOptions: { prompt: message, options: { ...options } },
+      },
+    )
+    scrollToBottom()
+  }
+  finally {
+    loading.value = false
+  }
+}
+
+async function onEdit(text: string, index: number) {
+  dataSources.value.splice(index + 1)
+  // eslint-disable-next-line no-console
+  console.log('onEdit', text, index, dataSources.value[index])
+  let message = text
+
+  if (loading.value)
+    return
+
+  if (!message || message.trim() === '')
+    return
+
+  controller = new AbortController()
 
   loading.value = true
   prompt.value = ''
@@ -394,6 +536,31 @@ function handleStop() {
   }
 }
 
+// 可优化部分
+// 搜索选项计算，这里使用value作为索引项，所以当出现重复value时渲染异常(多项同时出现选中效果)
+// 理想状态下其实应该是key作为索引项,但官方的renderOption会出现问题，所以就需要value反renderLabel实现
+const searchOptions = computed(() => {
+  if (prompt.value.startsWith('/')) {
+    return promptTemplate.value.filter((item: { key: string }) => item.key.toLowerCase().includes(prompt.value.substring(1).toLowerCase())).map((obj: { value: any }) => {
+      return {
+        label: obj.value,
+        value: obj.value,
+      }
+    })
+  }
+  else {
+    return []
+  }
+})
+// value反渲染key
+const renderOption = (option: { label: string }) => {
+  for (const i of promptTemplate.value) {
+    if (i.value === option.label)
+      return [i.key]
+  }
+  return []
+}
+
 const placeholder = computed(() => {
   if (isMobile.value)
     return t('chat.placeholderMobile')
@@ -451,11 +618,12 @@ onUnmounted(() => {
               <Message
                 v-for="(item, index) of dataSources"
                 :key="index"
+                v-model:text="item.text"
                 :date-time="item.dateTime"
-                :text="item.text"
                 :inversion="item.inversion"
                 :error="item.error"
                 :loading="item.loading"
+                @edit-submit="onEdit($event, index)"
                 @regenerate="onRegenerate(index)"
                 @delete="handleDelete(index)"
               />
@@ -490,13 +658,20 @@ onUnmounted(() => {
               <SvgIcon icon="ri:chat-history-line" />
             </span>
           </HoverButton>
-          <NInput
-            v-model:value="prompt"
-            type="textarea"
-            :autosize="{ minRows: 1, maxRows: 2 }"
-            :placeholder="placeholder"
-            @keypress="handleEnter"
-          />
+          <NAutoComplete v-model:value="prompt" :options="searchOptions" :render-label="renderOption">
+            <template #default="{ handleInput, handleBlur, handleFocus }">
+              <NInput
+                v-model:value="prompt"
+                type="textarea"
+                :placeholder="placeholder"
+                :autosize="{ minRows: 1, maxRows: 2 }"
+                @input="handleInput"
+                @focus="handleFocus"
+                @blur="handleBlur"
+                @keypress="handleEnter"
+              />
+            </template>
+          </NAutoComplete>
           <NButton type="primary" :disabled="buttonDisabled" @click="handleSubmit">
             <template #icon>
               <span class="dark:text-black">
