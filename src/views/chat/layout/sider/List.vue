@@ -1,23 +1,41 @@
 <script setup lang='ts'>
-import { computed } from 'vue'
+import { computed, nextTick, onMounted } from 'vue'
 import { NInput, NPopconfirm, NScrollbar } from 'naive-ui'
 import { SvgIcon } from '@/components/common'
 import { useAppStore, useChatStore } from '@/store'
 import { useBasicLayout } from '@/hooks/useBasicLayout'
+import { useAuthStoreWithout } from '@/store/modules/auth'
 
 const { isMobile } = useBasicLayout()
 
 const appStore = useAppStore()
 const chatStore = useChatStore()
+const authStore = useAuthStoreWithout()
 
 const dataSources = computed(() => chatStore.history)
+
+onMounted(async () => {
+  if (authStore.session == null || !authStore.session.auth || authStore.token)
+    await handleSyncChat()
+})
+
+async function handleSyncChat() {
+  // if (chatStore.history.length == 1 && chatStore.history[0].title == 'New Chat'
+  //   && chatStore.chat[0].data.length <= 0)
+  await chatStore.syncHistory()
+  const scrollRef = document.querySelector('#scrollRef')
+  if (scrollRef)
+    nextTick(() => scrollRef.scrollTop = scrollRef.scrollHeight)
+}
 
 async function handleSelect({ uuid }: Chat.History) {
   if (isActive(uuid))
     return
 
-  if (chatStore.active)
-    chatStore.updateHistory(chatStore.active, { isEdit: false })
+  // 这里不需要 不然每次切换都rename
+  // if (chatStore.active)
+  //   chatStore.updateHistory(chatStore.active, { isEdit: false })
+  await chatStore.syncChat({ uuid } as Chat.History)
   await chatStore.setActive(uuid)
 
   if (isMobile.value)
