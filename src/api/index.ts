@@ -28,7 +28,7 @@ export function fetchChatAPIProcess<T = any>(
     onDownloadProgress?: (progressEvent: AxiosProgressEvent) => void },
     
 ) {
-  debugger;
+  console.log('process', process.env.NODE_ENV === 'development')
   return post<T>({
     url: 'https://cbjtestapi.binjie.site:7777/api/generateStream',
     data: { prompt: params.prompt, userId: window.location.hash, network: !!params.network },
