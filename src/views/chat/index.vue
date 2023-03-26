@@ -448,15 +448,8 @@ onUnmounted(() => {
           <template v-if="!dataSources.length">
             <div class="flex items-center flex-col justify-center mt-4 text-center ">
               <SvgIcon icon="ri:bubble-chart-fill" class="mr-2 text-3xl" />
-              <div>永久免费提供学习和测试，支持上下文，支持开启关闭联网模式，支持保存会话，切勿发布至国内平台或微信分享</div>
-              <div>被举报了，chat.binjie.site域名的dns被运营商污染了。。60%以上地区无法访问</div>
-              <div>可以访问境内镜像： https://chat1.binjie.site:7777 或者chat2,chat3,一直到9</div>
-              <div>还可以访问 cloudflare托管的 https://chat.yqcloud.top/</div>
-              <div></div>
-              <div>如果你觉得做的好，可以给我买一瓶冰阔落</div>
-              <div>
-                <img src="https://store-cbj.oss-cn-beijing.aliyuncs.com/kele.jpg" width="200" height="100" alt="kele">
-              </div>
+              <div>永久免费提供学习和测试，支持上下文，支持开启关闭联网模式，支持保存会话。</div>
+              <div>联网模式获取的信息并不一定精准，请仔细核对。</div>
             </div>
           </template>
           <template v-else>
