@@ -17,7 +17,7 @@ export function defaultSetting(): UserState {
     userInfo: {
       avatar: 'https://git.mohe.cf/Chanzhaoyu/chatgpt-web/main/src/assets/avatar.jpg',
       name: 'user',
-      description: 'GO to <a href="https://chat.readon.ml" class="text-blue-500" target="_blank" >联网版</a>',
+      description: '调用GPT3.5API',
     },
   }
 }
